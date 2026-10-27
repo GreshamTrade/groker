@@ -1,0 +1,11 @@
+.git
+.env
+.env.local
+.env.*.local
+__pycache__
+**/__pycache__
+.pytest_cache
+.vercel
+data
+qa
+tests

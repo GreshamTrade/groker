@@ -47,7 +47,7 @@
     const minutes = Math.max(0, Math.round((Date.now()-new Date(value))/60000));
     return minutes < 1 ? 'Just now' : minutes < 60 ? `${minutes}m ago` : date(value);
   };
-  let room, activeJob = null, lastReport = null, pollTimer, findingFilter = 'all', selectedAgent = null;
+  let room, activeJob = null, lastReport = null, findingFilter = 'all', selectedAgent = null;
   let currentRuns = [];
   const route = location.pathname;
   const activeRoute = route.startsWith('/runs') ? 'runs' : route === '/crew' ? 'crew' : route === '/guide' ? 'guide' : 'desk';
@@ -64,7 +64,7 @@
   async function request(path, options) {
     const response = await fetch(path, options);
     let body;
-    try { body = await response.json(); } catch { throw new Error('The local server returned an unexpected response.'); }
+    try { body = await response.json(); } catch { throw new Error(response.status === 504 ? 'The inspection exceeded the server time limit. Please try again.' : 'The server returned an unexpected response. Please try again.'); }
     if (!response.ok) throw new Error(body.error || 'Something went wrong. Please try again.');
     return body;
   }
@@ -150,32 +150,51 @@
       try { const url=new URL(input.value.includes('://') ? input.value : `https://${input.value}`); if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) throw new Error(); }
       catch { error.textContent='That address does not look right. Try example.com or https://example.com.'; error.hidden=false; input.focus(); return; }
     }
+    const mission = {id:crypto.randomUUID().replaceAll('-','').slice(0,12), url:demo?'https://orbit.demo/':input.value,
+      demo, created_at:new Date().toISOString(), status:'running', progress:0, agent:'scout',
+      title:'Getting the crew together', estimated:true, events:[], controller:new AbortController(), started:Date.now()};
+    activeJob=mission;
     setBusy(true);
+    const animate = () => {
+      if(activeJob!==mission)return;
+      const elapsed=Date.now()-mission.started;
+      const progress=Math.min(94,Math.floor(95*(1-Math.exp(-elapsed/12000))));
+      const index=progress<26?0:progress<48?1:progress<70?2:progress<85?3:4;
+      Object.assign(mission,{progress,agent:crew[index].id,title:elapsed>35000?'Waiting for the finished report':crew[index].verb,
+        events:[{detail:'Workshop activity is animated. The server returns verified findings when the inspection finishes.'}]});
+      renderMission(mission);
+    };
+    animate();
+    mission.timer=setInterval(animate,700);
+    mission.timeout=setTimeout(()=>{mission.timedOut=true;mission.controller.abort();},65000);
     try {
-      const {id} = await request('/api/runs', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:input.value,demo})});
-      activeJob=id; await pollJob(id);
-    } catch (exc) { error.textContent=exc.message; error.hidden=false; setBusy(false); }
+      const job = await request('/api/index', {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({action:'inspect',url:input.value,demo}),signal:mission.controller.signal});
+      if(activeJob!==mission)return;
+      const saved=window.GrokerArchive.save(job);
+      renderMission(job); renderReport(job.report); updateRunCount();
+      if(!saved)toast('Browser storage is unavailable. Export this report before leaving the page.');
+    } catch (exc) {
+      if(activeJob!==mission)return;
+      const message=mission.timedOut?'The server did not return a report within 65 seconds. Please try again.':exc.message;
+      error.textContent=message; error.hidden=false;
+      renderMission({...mission,status:'error',estimated:false,title:'The crew hit a roadblock',error:message});
+    } finally {
+      clearInterval(mission.timer);clearTimeout(mission.timeout);
+      if(activeJob===mission){activeJob=null;setBusy(false);}
+    }
   }
   function setBusy(busy) {
     $('#scan-button').disabled=busy; $('#demo-button').disabled=busy;
     $('#website-url').disabled=busy;
     $('#scan-button').innerHTML=busy ? `<span class="button-spinner"></span> Crew at work` : `Send in the crew ${icon('arrow')}`;
   }
-  async function pollJob(id) {
-    clearTimeout(pollTimer);
-    try {
-      const job=await request(`/api/runs/${id}`);
-      renderMission(job);
-      if (job.status === 'running') { activeJob=id; pollTimer=setTimeout(()=>pollJob(id),650); }
-      else {
-        activeJob=null; setBusy(false);
-        if (job.status==='complete') { renderReport(job.report); updateRunCount(); }
-        if (job.status==='error') { $('#form-error').textContent=job.error; $('#form-error').hidden=false; }
-      }
-    } catch (exc) {
-      activeJob=null; setBusy(false); room?.setState({status:'idle'});
-      $('#form-error').textContent=`Could not read the run: ${exc.message} Open Runs to check its status.`; $('#form-error').hidden=false;
-    }
+  function stopWaiting() {
+    const mission=activeJob;if(!mission)return;
+    activeJob=null;clearInterval(mission.timer);clearTimeout(mission.timeout);mission.controller.abort();
+    setBusy(false);
+    renderMission({...mission,status:'cancelled',estimated:false,title:'Back on a snack break',
+      error:'You stopped waiting. The server may finish its bounded inspection; no report will be saved.',events:[]});
   }
   function renderMission(job) {
     const running=job.status==='running', done=job.status==='complete';
@@ -189,14 +208,14 @@
     $('.mission-number').textContent='# '+job.id.slice(0,4).toUpperCase();
     $('#mission-content').innerHTML=`<div class="mission-target"><span class="target-icon">${icon(done?'check':'globe')}</span><div><span class="mission-type">${job.demo?'DEMO INSPECTION':'WEBSITE INSPECTION'}</span><strong>${esc(domain)}</strong></div></div>
       <div class="mission-current"><span class="eyebrow">${done?'THE CREW HAS CLOCKED OUT':running?`${esc(person.name.toUpperCase())} IS ON IT`:'MISSION STATUS'}</span><h3>${esc(job.title)}</h3></div>
-      <div class="mission-progress"><div><span>${done?'All receipts filed':running?'Inspection in progress':job.status==='cancelled'?'Stopped by you':'Could not finish'}</span><strong>${percent}%</strong></div><div class="progress-track"><i style="width:${percent}%"></i></div></div>
+      <div class="mission-progress"><div><span>${done?'All receipts filed':running?'Crew activity · estimated':job.status==='cancelled'?'Stopped waiting':'Could not finish'}</span><strong>${job.estimated?'≈ ':''}${percent}%</strong></div><div class="progress-track"><i style="width:${percent}%"></i></div></div>
       <div class="mission-steps">${crew.map((p,i)=>{
-        const current=crew.indexOf(person), completed=done || (running && i<current), working=running && p.id===job.agent;
+        const completed=done, working=running && p.id===job.agent;
         return `<div class="mission-step ${completed?'done':''} ${working?'current':''}"><span class="step-status">${completed?icon('check'):working?'<i></i>':icon('clock')}</span><span>${p.tool}</span>${working?'<span class="working-bars"><i></i><i></i><i></i></span>':''}</div>`;
       }).join('')}</div>
-      ${done?`<a class="button primary full" href="#results-section">Open the receipts ${icon('arrow')}</a><a class="mission-history-link" href="/runs/${job.id}">Permanent run page ${icon('external')}</a>`:running?`<button class="text-button cancel-button" id="cancel-run">${icon('stop')} Stop inspection</button>`:`<p class="mission-error">${esc(job.error || 'The crew is ready for another mission.')}</p>`}
+      ${done?`<a class="button primary full" href="#results-section">Open the receipts ${icon('arrow')}</a><a class="mission-history-link" href="/runs/${job.id}">Saved in this browser ${icon('file')}</a>`:running?`<button class="text-button cancel-button" id="cancel-run">${icon('stop')} Stop waiting</button>`:`<p class="mission-error">${esc(job.error || 'The crew is ready for another mission.')}</p>`}
       <div class="latest-event"><span class="status-dot"></span>${esc(job.events?.at(-1)?.detail || 'Getting everything ready.')}</div>`;
-    $('#cancel-run')?.addEventListener('click',async()=>{ try {await request(`/api/runs/${job.id}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); await pollJob(job.id);}catch(exc){toast(exc.message);} });
+    $('#cancel-run')?.addEventListener('click',stopWaiting);
     $$('.crew-mini').forEach(button=>{
       const p=crew.find(c=>c.id===button.dataset.person), working=running&&p.id===job.agent;
       button.classList.toggle('on-task',working);
@@ -244,23 +263,22 @@
     document.title='Field guide — GROKER';
     $('#main').innerHTML=pageHeading('THE FIELD GUIDE','Personality up front.<br><span class="muted">Evidence underneath.</span>','What happens when you send in the crew, and what their findings can actually tell you.')+
       `<div class="guide-layout"><aside class="guide-nav"><a href="#how">How it works</a><a href="#scope">Inspection scope</a><a href="#evidence">Reading a receipt</a><a href="#memory">Saved runs</a><a href="#grok">Where Grok fits</a></aside><div class="guide-content">
-      <section id="how"><span class="eyebrow">THE WORKFLOW</span><h2>One URL. Five little jobs.</h2><p>Enter a public website address. The crew reads a bounded sample, checks its links and resources, repeats missing responses and puts the observations in a report.</p><div class="guide-pipeline">${crew.map((p,i)=>`<div>${botSvg(p,'',true)}<strong>${p.name}</strong><small>${p.tool}</small></div>`).join('')}</div><p>The workshop reflects the current inspection phase. The characters walk between workstations, carry notebooks and take small breaks. A live inspection changes their routes, tasks and the notes above their heads. You can pause the scene without stopping the inspection.</p></section>
+      <section id="how"><span class="eyebrow">THE WORKFLOW</span><h2>One URL. Five little jobs.</h2><p>Enter a public website address. The crew reads a bounded sample, checks its links and resources, repeats missing responses and puts the observations in a report.</p><div class="guide-pipeline">${crew.map((p,i)=>`<div>${botSvg(p,'',true)}<strong>${p.name}</strong><small>${p.tool}</small></div>`).join('')}</div><p>The characters walk between workstations while one server request completes the inspection. Workshop phases and the activity bar are an estimated animation, not streamed measurements. Completed observations arrive together in the report. You can pause the scene without stopping the request.</p></section>
       <section id="scope"><span class="eyebrow">SCOPE, WITHOUT THE SMALL PRINT</span><h2>Small crew. Clear boundaries.</h2><div class="scope-columns"><div><h3>${icon('check')} Checked in this version</h3><ul><li>Up to 8 public HTML pages</li><li>Up to 28 same-origin links</li><li>Up to 16 same-origin resources</li><li>HTTP responses and redirects</li><li>Page titles, descriptions and language</li><li>Image alt attributes and viewport tags</li><li>A repeat request for missing responses</li></ul></div><div><h3>${icon('file')} Outside this inspection</h3><ul><li>Pages behind a login</li><li>Form submissions or checkout flows</li><li>JavaScript-rendered content and layout</li><li>Mobile screenshots or visual comparisons</li><li>Security vulnerabilities and compliance</li><li>Exhaustive coverage of an entire domain</li></ul></div></div><p>A missing viewport tag is a document observation, not proof of a broken mobile layout. A blocked request is marked as limited access. No findings in a sample does not mean a website is error-free.</p></section>
       <section id="evidence"><span class="eyebrow">KEEP THE RECEIPTS</span><h2>Open any finding.</h2><p>Each receipt includes the source URL, the observed condition, the responsible checker and whether a missing response repeated. Severity is a practical review category, not a universal website score.</p><div class="guide-example"><span class="severity-marker error">!</span><div><strong>This link goes nowhere</strong><code>HTTP 404 · linked from the inspected website · repeat HTTP 404</code></div><span class="pill tiny">Rechecked</span></div><p>The demo uses a small fixture website with intentional missing pages and document omissions. It runs through the same inspection logic and is always labelled Demo.</p></section>
-      <section id="memory"><span class="eyebrow">A LITTLE MEMORY</span><h2>The work stays on the desk.</h2><p>Completed runs are saved by this local server and can be reopened from Runs. Export any report as JSON. History belongs to this installation and is not synced to a hosted account.</p><a class="inline-link" href="/runs">Open the run archive ${icon('arrow')}</a></section>
+      <section id="memory"><span class="eyebrow">A LITTLE MEMORY</span><h2>The work stays on your desk.</h2><p>The latest 20 completed reports are saved in this browser, with fewer retained if storage is limited. Run links reopen reports on this browser and device; they are not public share links. Export JSON for a copy you can keep. Clearing browser storage removes the archive.</p><p>Keep this tab open until the report arrives. Reloading or navigating away interrupts the request. Stop waiting disconnects this tab; the server may finish its bounded work, but the result will not be saved.</p><a class="inline-link" href="/runs">Open the run archive ${icon('arrow')}</a></section>
       <section id="grok"><span class="eyebrow">THE MODEL'S JOB</span><h2>Code gathers.<br><span class="muted">Grok can explain.</span></h2><p>Collection and checks run in code. If the server is configured with a Grok model API key and model name, Chief sends the collected observations to that model for a final summary. Without configuration, the report uses a deterministic evidence summary.</p><p>This application does not create, control or connect to hosted Grok Bots. The team structure is inspired by specialist bots, shared evidence and explicit handoffs.</p><a class="button primary" href="/">Back to the workbench ${icon('arrow')}</a></section>
       </div></div>`;
   }
   async function updateRunCount() {
-    try { currentRuns=await request('/api/runs'); const badge=$('#nav-run-count');badge.hidden=!currentRuns.length;badge.textContent=currentRuns.length; }catch{}
+    currentRuns=window.GrokerArchive.list(); const badge=$('#nav-run-count');badge.hidden=!currentRuns.length;badge.textContent=currentRuns.length;
   }
   async function renderRuns() {
     document.title='Runs — GROKER';
-    $('#main').innerHTML=pageHeading('THE RUN ARCHIVE','Work done.<br><span class="muted">Receipts kept.</span>','Every finished mission has a paper trail. Pick a run to see what the crew found.',`<a class="button primary" href="/">New inspection ${icon('plus')}</a>`)+
+    $('#main').innerHTML=pageHeading('THE RUN ARCHIVE','Work done.<br><span class="muted">Receipts kept.</span>','Reports saved in this browser. Pick a mission to reopen its evidence; export JSON to keep a separate copy.',`<a class="button primary" href="/">New inspection ${icon('plus')}</a>`)+
       `<section class="runs-section"><div class="archive-toolbar"><label class="archive-search">${icon('search')}<input id="run-search" type="search" placeholder="Find a website..." aria-label="Search runs"></label><div class="filter-tabs"><button class="active" data-run-filter="all">All runs</button><button data-run-filter="live">Live websites</button><button data-run-filter="demo">Demos</button></div></div><div id="runs-content"><p class="loading-copy">Fetching the paper trail…</p></div></section>`;
     let filter='all';
-    try { currentRuns=await request('/api/runs'); }
-    catch(exc) { $('#runs-content').innerHTML=`<div class="empty-report"><p>${esc(exc.message)}</p><button class="button secondary" onclick="location.reload()">Try again</button></div>`;return; }
+    currentRuns=window.GrokerArchive.list();
     function paint() {
       const search=$('#run-search').value.trim().toLowerCase();
       const runs=currentRuns.filter(job=>(filter==='all'||(filter==='demo')===job.demo)&&job.url.toLowerCase().includes(search));
@@ -274,7 +292,7 @@
     renderDesk();
     $('.desk-intro').innerHTML=`<div class="intro-copy"><a class="inline-link" href="/runs">← All runs</a><div class="eyebrow">MISSION ${esc(id.slice(0,6).toUpperCase())}</div><h1>Here are<br><span class="muted">the receipts.</span></h1></div><div class="run-page-art">${botSvg(crew[4])}</div>`;
     document.title=`Run ${id.slice(0,6).toUpperCase()} — GROKER`;
-    try {const job=await request(`/api/runs/${id}`); $('#website-url').value=job.url; if(job.status==='running'){setBusy(true);activeJob=id;await pollJob(id);}else{renderMission(job);if(job.report)renderReport(job.report);} }
+    try {const job=window.GrokerArchive.get(id);if(!job)throw new Error('This report is not saved in this browser. Open it on the device where you ran the inspection, or start a new one.');$('#website-url').value=job.url;renderMission(job);renderReport(job.report);}
     catch(exc){$('#form-error').textContent=exc.message;$('#form-error').hidden=false;}
   }
   if (route==='/crew') renderCrew();

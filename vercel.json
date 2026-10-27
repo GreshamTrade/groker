@@ -1,0 +1,23 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{server.py,reporting.py}",
+      "excludeFiles": "{public/**,tests/**,qa/**,data/**,__pycache__/**}"
+    }
+  },
+  "rewrites": [
+    {"source": "/crew", "destination": "/index.html"},
+    {"source": "/guide", "destination": "/index.html"},
+    {"source": "/runs", "destination": "/index.html"},
+    {"source": "/runs/:id([a-f0-9]{12})", "destination": "/index.html"}
+  ],
+  "headers": [
+    {"source": "/(.*)", "headers": [{"key": "X-Content-Type-Options", "value": "nosniff"}]}
+  ]
+}

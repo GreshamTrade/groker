@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fffaf0">
+  <meta name="description" content="GROKER — a little crew for the loose ends of the internet. Inspect a website, follow the work, keep the receipts.">
+  <title>GROKER — little guys. real work.</title>
+  <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/refinement.css">
+  <link rel="stylesheet" href="/studio.css">
+  <script src="/vendor/three.min.js" defer></script>
+  <script src="/room.js" defer></script>
+  <script src="/report.js" defer></script>
+  <script src="/archive.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="GROKER home"><svg viewBox="0 0 36 40" aria-hidden="true"><path d="M12 3C18-2 34 10 33 23S19 42 8 34-1 16 12 3Z" fill="currentColor"/><path d="m15 13 3 6m5-9 3 6" stroke="#493d46" stroke-width="3.7" stroke-linecap="round"/></svg><span>GROKER<span class="brand-period">.</span></span></a>
+    <nav aria-label="Main navigation">
+      <a href="/" data-nav="desk">Workbench</a><a href="/runs" data-nav="runs">Runs<span id="nav-run-count" class="nav-count" hidden>0</span></a><a href="/crew" data-nav="crew">The crew</a><a href="/guide" data-nav="guide">Field guide</a>
+    </nav>
+    <div class="sidebar-note"><span>✳</span><strong>Curiosity,<br>clocked in.</strong><p>A small shared studio.<br>A proper paper trail.</p><a href="/guide">Peek under the hood ↗</a></div>
+  </header>
+  <main id="main"></main>
+  <footer class="site-footer"><a class="footer-wordmark" href="/">GROKER<span>✳</span></a><span>Little guys. Real work. All receipts.</span><span class="footer-note">Grok-inspired · independently built</span><a href="/guide#scope">What we actually check <span>↗</span></a></footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="finding-dialog"><button class="dialog-close" aria-label="Close details">×</button><div id="finding-content"></div></dialog>
+</body>
+</html>
